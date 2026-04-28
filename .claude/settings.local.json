@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(C:/Users/ccin/PyCharmMiscProject/.venv/Scripts/pip.exe install:*)",
+      "Bash(C:/Users/ccin/PyCharmMiscProject/.venv/Scripts/playwright.exe install:*)"
+    ]
+  }
+}
