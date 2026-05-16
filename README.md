@@ -899,13 +899,13 @@ flake8 src/
 **修复**
 - 🐛 修复时间标准化边界情况
 
-### v6.1 - 2026-05-xx
+### v6.1 - 2026-05-13
 
 **新功能**
 - ✨ 添加重复文章检测
 - ✨ 已抓取 URL 持久化记录
 
-### v6.0 - 2026-05-xx
+### v6.0 - 2026-05-04
 
 **重大更新**
 - ✨ 全自动运行模式，零交互设计
@@ -914,7 +914,7 @@ flake8 src/
 - ✨ 按微信发布时间排序
 - ✨ Markdown 格式输出
 
-### v5.0 - 2026-05-xx
+### v5.0 - 2026-04-24
 
 **功能**
 - ✨ 手动输入文章链接
@@ -975,11 +975,11 @@ SOFTWARE.
 
 ### 联系方式
 
-| 渠道 | 链接 |
-|-----|------|
-| GitHub Issues | [提交 Issue](https://github.com/nCuyTex/scnu-wechat-crawler/issues) |
+| 渠道 | 链接                                                                 |
+|-----|--------------------------------------------------------------------|
+| GitHub Issues | [提交 Issue](https://github.com/nCuyTex/scnu-wechat-crawler/issues)  |
 | GitHub Discussions | [参与讨论](https://github.com/nCuyTex/scnu-wechat-crawler/discussions) |
-| 电子邮件 | [发送邮件](mailto:your-email@example.com) |
+| 电子邮件 | [发送邮件](mailto:charehall@126.com)                                   |
 
 ### 支持与赞赏
 

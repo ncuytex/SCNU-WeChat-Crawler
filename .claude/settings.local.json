@@ -7,7 +7,19 @@
       "Bash(pip install *)",
       "WebFetch(domain:news.scnu.edu.cn)",
       "Bash(python auto_scnu_crawler.py)",
-      "Bash(python src/auto_scnu_crawler.py)"
+      "Bash(python src/auto_scnu_crawler.py)",
+      "Skill(superpowers:brainstorming)",
+      "Skill(superpowers:brainstorming:*)",
+      "Skill(superpowers:writing-plans)",
+      "Skill(superpowers:writing-plans:*)",
+      "Bash(python -m py_compile src/auto_scnu_crawler.py)",
+      "Bash(python -c \"from src.auto_scnu_crawler import load_config, AIAnalyzer, extract_time_events; print\\('Import successful'\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Skill(frontend-design)",
+      "Skill(frontend-design:*)",
+      "Bash(python -c \"import sys; sys.path.insert\\(0, 'src'\\); from auto_scnu_crawler import load_config; c = load_config\\(\\); print\\('Config loaded:', c.get\\('analysis_mode'\\)\\)\")"
     ]
   }
 }

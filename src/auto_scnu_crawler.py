@@ -53,6 +53,8 @@ from urllib.parse import urljoin, urlparse
 import requests
 from bs4 import BeautifulSoup
 
+from src.scnu_wechat_crawler import LOG_DIR
+
 # ============================================================
 #  可配置参数
 # ============================================================
@@ -80,12 +82,12 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUTPUT_DIR = os.path.join(BASE_DIR, "output")
 OUTPUT_MARKDOWN_FILE = os.path.join(OUTPUT_DIR, "wechat_schedule_output.md")
 
-# 已抓取记录配置
-CRAWLED_RECORD_FILE = os.path.join(BASE_DIR, "crawled_urls.txt")
-
 # 日志配置
 LOG_DIR = os.path.join(BASE_DIR, "logs")
 LOG_FILE = os.path.join(LOG_DIR, "scnu_auto_crawler.log")
+
+# 已抓取记录配置
+CRAWLED_RECORD_FILE = os.path.join(LOG_DIR, "crawled_urls.txt")
 
 # 需要获取的最新文章数量
 TARGET_ARTICLE_COUNT = 2
@@ -590,13 +592,12 @@ class AIAnalyzer:
         )
 
         if response.status_code != 200:
-            error_msg = f"API 返回错误：{response.status_code}"
-            if response.status_code == 401:
-                error_msg = "API Key 错误（401）"
-            elif response.status_code == 429:
-                error_msg = "请求频率超限（429）"
-            elif response.status_code >= 500:
-                error_msg = f"服务器错误：{response.status_code}"
+            try:
+                resp_body = response.json()
+                error_detail = resp_body.get("error", {}).get("message", str(resp_body))
+            except:
+                error_detail = response.text[:500] if response.text else "无响应内容"
+            error_msg = f"API 返回错误：{response.status_code} - {error_detail}"
             raise Exception(error_msg)
 
         data = response.json()
@@ -922,11 +923,6 @@ def format_markdown(articles: List[Article], analysis_mode: str = "regex") -> st
             lines.append("无相关日程")
         lines.append("")
 
-        lines.append("### 原文内容（前 500 字）")
-        content_preview = art.content[:500] + "..." if len(art.content) > 500 else art.content
-        lines.append("```")
-        lines.append(content_preview)
-        lines.append("```\n")
 
     lines.append("---\n## 日程汇总\n")
     all_events = []
