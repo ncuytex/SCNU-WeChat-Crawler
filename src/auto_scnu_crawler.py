@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-华南师范大学「晚安华师」微信公众号日程自动抓取工具 v6.0
+华南师范大学「晚安华师」微信公众号日程自动抓取工具 v6.1
 ======================================================
 功能特性：
 1. 全自动运行 - 无需任何用户输入，双击即可运行
@@ -12,6 +12,7 @@
 6. 按微信官方发布时间排序，取最新 2 篇
 7. 智能提取日程信息
 8. 自动输出到控制台和 markdown 文件
+9. 已抓取文章标记 - 自动记录已抓取文章，避免重复处理
 
 运行方式：
     python auto_scnu_crawler.py
@@ -20,11 +21,13 @@
     - 控制台打印抓取结果
     - wechat_schedule_output.md (含文章详情和日程汇总)
     - scnu_auto_crawler.log (运行日志)
+    - crawled_urls.txt (已抓取文章 URL 记录)
 
 注意事项：
     1. 新发布文章需等待 10-30 分钟才能被抓取
     2. 程序自动使用微信 UA 绕过安全策略
     3. 仅处理跳转到 mp.weixin.qq.com 的链接
+    4. 已抓取文章会自动记录，下次运行时跳过
 """
 
 import re
@@ -69,6 +72,9 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUTPUT_DIR = os.path.join(BASE_DIR, "output")
 OUTPUT_MARKDOWN_FILE = os.path.join(OUTPUT_DIR, "wechat_schedule_output.md")
 
+# 已抓取记录配置
+CRAWLED_RECORD_FILE = os.path.join(BASE_DIR, "crawled_urls.txt")
+
 # 日志配置
 LOG_DIR = os.path.join(BASE_DIR, "logs")
 LOG_FILE = os.path.join(LOG_DIR, "scnu_auto_crawler.log")
@@ -89,6 +95,55 @@ logging.basicConfig(
     ],
 )
 logger = logging.getLogger(__name__)
+
+# ============================================================
+#  已抓取记录管理
+# ============================================================
+
+def load_crawled_urls() -> Set[str]:
+    """
+    从本地文件加载已抓取的 URL 记录
+    返回：已抓取 URL 的集合
+    """
+    crawled = set()
+    try:
+        if os.path.exists(CRAWLED_RECORD_FILE):
+            with open(CRAWLED_RECORD_FILE, "r", encoding="utf-8") as f:
+                for line in f:
+                    url = line.strip()
+                    if url:
+                        crawled.add(url)
+            logger.info(f"已加载 {len(crawled)} 条已抓取记录")
+    except Exception as e:
+        logger.warning(f"读取已抓取记录失败：{e}")
+    return crawled
+
+
+def save_crawled_urls(crawled: Set[str]) -> bool:
+    """
+    将已抓取的 URL 记录保存到本地文件
+    返回：是否保存成功
+    """
+    try:
+        with open(CRAWLED_RECORD_FILE, "w", encoding="utf-8") as f:
+            for url in sorted(crawled):
+                f.write(url + "\n")
+        logger.info(f"已保存 {len(crawled)} 条已抓取记录到 {CRAWLED_RECORD_FILE}")
+        return True
+    except Exception as e:
+        logger.error(f"保存已抓取记录失败：{e}")
+        return False
+
+
+def add_crawled_url(crawled: Set[str], url: str) -> bool:
+    """
+    添加单个 URL 到已抓取记录
+    返回：是否添加成功（URL 已存在时返回 False）
+    """
+    if url in crawled:
+        return False
+    crawled.add(url)
+    return save_crawled_urls(crawled)
 
 # ============================================================
 #  HTTP 请求工具
@@ -702,14 +757,15 @@ def run_auto_crawler() -> List[Article]:
     1. 访问新闻网
     2. 提取所有链接
     3. 检测 302 跳转，筛选微信链接
-    4. 抓取文章并校验
-    5. 排序取最新 N 篇
-    6. 提取日程
-    7. 输出结果
+    4. 读取已抓取记录，跳过已处理文章
+    5. 抓取文章并校验
+    6. 排序取最新 N 篇
+    7. 提取日程
+    8. 输出结果
     """
     print()
     print("=" * 60)
-    print("华南师范大学「晚安华师」日程自动抓取工具 v6.0")
+    print("华南师范大学「晚安华师」日程自动抓取工具 v6.1")
     print("=" * 60)
     print(f"目标网站：{NEWS_SCNU_EDU_URL}")
     print(f"输出文件：{OUTPUT_MARKDOWN_FILE}")
@@ -719,6 +775,14 @@ def run_auto_crawler() -> List[Article]:
     print("=" * 60)
 
     articles = []
+
+    # 加载已抓取记录
+    print("\n[初始化] 读取已抓取文章记录...")
+    crawled_urls = load_crawled_urls()
+    if crawled_urls:
+        print(f"  已加载 {len(crawled_urls)} 条历史记录")
+    else:
+        print("  无历史记录（首次运行）")
 
     # Step 1: 访问新闻网
     print("\n[Step 1/6] 访问华南师范大学新闻网...")
@@ -749,15 +813,22 @@ def run_auto_crawler() -> List[Article]:
         print("稍后可重新运行程序重试。")
         return []
 
-    # Step 4: 抓取文章并校验
+    # Step 4: 抓取文章并校验（跳过已抓取）
     print(f"\n[Step 4/6] 抓取文章并校验（目标 {TARGET_ARTICLE_COUNT} 篇）...")
     for i, url in enumerate(wechat_links, 1):
-        print(f"\n  [{i}/{len(wechat_links)}] 处理：{url[:60]}...")
+        url_display = url[:60] + "..." if len(url) > 60 else url
+
+        # 检查是否已抓取
+        if url in crawled_urls:
+            print(f"  [{i}/{len(wechat_links)}] [已抓取] 跳过文章：{url}")
+            continue
+
+        print(f"  [{i}/{len(wechat_links)}] [新文章] 开始处理：{url}")
 
         title, pub_date, source, content = extract_article_content(url)
 
         if not validate_article(title, source, content):
-            print("    [跳过] 文章校验失败")
+            print("    [跳过] 文章校验失败，不记录到已抓取列表")
             continue
 
         # 提取日程
@@ -779,7 +850,10 @@ def run_auto_crawler() -> List[Article]:
             schedule_events=events
         )
         articles.append(article)
-        print(f"    [成功] 标题={title[:30]}..., 日程={len(events)} 条")
+
+        # 记录到已抓取列表
+        add_crawled_url(crawled_urls, url)
+        print(f"    [成功] 标题={title[:30]}..., 日程={len(events)} 条，已记录到已抓取列表")
 
         # 已达到目标数量，停止抓取
         if len(articles) >= TARGET_ARTICLE_COUNT:
@@ -814,6 +888,7 @@ def run_auto_crawler() -> List[Article]:
     print(f"成功抓取：{len(articles)} 篇文章")
     print(f"结果已保存到：{OUTPUT_MARKDOWN_FILE}")
     print(f"日志文件：{LOG_FILE}")
+    print(f"已抓取记录：{CRAWLED_RECORD_FILE} (共 {len(crawled_urls)} 条)")
 
     return articles
 
