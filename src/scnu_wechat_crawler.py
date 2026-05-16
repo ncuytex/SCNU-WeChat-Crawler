@@ -1,30 +1,24 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-华南师范大学「晚安华师」微信公众号日程自动抓取工具 v6.0
+华南师范大学「晚安华师」微信公众号日程自动抓取工具 v5.0
 ======================================================
-功能特性：
-1. 全自动运行 - 无需任何用户输入，双击即可运行
-2. 自动访问华南师范大学新闻网 (https://news.scnu.edu.cn/)
-3. 自动提取页面所有文章链接
-4. 自动检测 302 跳转，智能筛选微信公众号链接
-5. 自动抓取文章内容，校验来源「晚安华师」
-6. 按微信官方发布时间排序，取最新 2 篇
-7. 智能提取日程信息
-8. 自动输出到控制台和 markdown 文件
+功能：
+1. 支持手动输入微信公众号文章链接
+2. 提取「晚安华师」推文正文
+3. 智能识别并抽取日程信息
+4. 输出结果到控制台和 markdown 文件
 
-运行方式：
-    python auto_scnu_crawler.py
-
-输出：
-    - 控制台打印抓取结果
-    - wechat_schedule_output.md (含文章详情和日程汇总)
-    - scnu_auto_crawler.log (运行日志)
+运行步骤：
+1. 确保已安装依赖：pip install -r requirements.txt
+2. 运行程序：python scnu_wechat_crawler.py
+3. 输入微信公众号文章链接（mp.weixin.qq.com）
+4. 查看控制台输出和 wechat_schedule_output.md 文件
 
 注意事项：
-    1. 新发布文章需等待 10-30 分钟才能被抓取
-    2. 程序自动使用微信 UA 绕过安全策略
-    3. 仅处理跳转到 mp.weixin.qq.com 的链接
+1. 新发布文章需等待 10-30 分钟才能被抓取
+2. fetcher API 仅用于兜底校验，不稳定
+3. 程序会自动规避微信安全策略，使用带 UA 的请求
 """
 
 import re
@@ -35,9 +29,8 @@ import hashlib
 import logging
 import time
 from datetime import datetime, timedelta
-from typing import List, Dict, Optional, Tuple, Set
+from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass, asdict
-from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -46,33 +39,27 @@ from bs4 import BeautifulSoup
 #  可配置参数
 # ============================================================
 
-# 目标网站
-NEWS_SCNU_EDU_URL = "https://news.scnu.edu.cn/"
-
 # 提取脚本相关
-WECHAT_ARTICLE_EXTRACTOR_PATH = None  # 本地 wechat-article-extractor 脚本路径
+WECHAT_ARTICLE_EXTRACTOR_PATH = None  # 本地 wechat-article-extractor 脚本路径，如无则置为 None
 
 # 兜底 API 地址
 FETCHER_API_URL = "https://down.mptext.top/api/public/v1/download"
 
 # 校验规则阈值
 MIN_CONTENT_LENGTH = 500  # 正文最小长度
-MIN_TITLE_LENGTH = 5      # 标题最小长度
 
 # 抓取等待时间（秒）
-FETCH_DELAY = 2           # 请求间隔，避免触发反爬
-API_TIMEOUT = 15          # API 请求超时时间
-PAGE_TIMEOUT = 20         # 新闻网页面超时
+FETCH_DELAY = 1  # 请求间隔，避免触发反爬
+API_TIMEOUT = 10  # API 请求超时时间
 
 # 输出配置
-OUTPUT_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+OUTPUT_DIR = os.path.join(BASE_DIR, "output")
 OUTPUT_MARKDOWN_FILE = os.path.join(OUTPUT_DIR, "wechat_schedule_output.md")
 
 # 日志配置
-LOG_FILE = os.path.join(OUTPUT_DIR, "scnu_auto_crawler.log")
-
-# 需要获取的最新文章数量
-TARGET_ARTICLE_COUNT = 2
+LOG_DIR = os.path.join(BASE_DIR, "logs")
+LOG_FILE = os.path.join(LOG_DIR, "scnu_crawler.log")
 
 # ============================================================
 #  日志初始化
@@ -87,6 +74,22 @@ logging.basicConfig(
     ],
 )
 logger = logging.getLogger(__name__)
+
+# ============================================================
+#  数据结构
+# ============================================================
+
+
+@dataclass
+class Article:
+    """文章数据结构"""
+    title: str
+    publish_date: str
+    source: str
+    content: str
+    url: str
+    schedule_events: List[Dict]
+
 
 # ============================================================
 #  HTTP 请求工具
@@ -105,31 +108,16 @@ HEADERS = {
     "Connection": "keep-alive",
 }
 
-BROWSER_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-    "Accept-Encoding": "gzip, deflate",
-    "Connection": "keep-alive",
-}
 
-
-def get_with_redirect(url: str, allow_redirects: bool = True,
-                      headers: Optional[Dict] = None,
-                      timeout: int = API_TIMEOUT) -> Tuple[Optional[str], Optional[str]]:
+def get_with_redirect(url: str, allow_redirects: bool = True) -> Tuple[Optional[str], Optional[str]]:
     """
     发送 GET 请求，返回 (最终 URL, 响应内容)
-    allow_redirects=False 时可检测 302 跳转目标
     """
     try:
         resp = requests.get(
             url,
-            headers=headers or HEADERS,
-            timeout=timeout,
+            headers=HEADERS,
+            timeout=API_TIMEOUT,
             allow_redirects=allow_redirects
         )
         resp.raise_for_status()
@@ -139,129 +127,8 @@ def get_with_redirect(url: str, allow_redirects: bool = True,
         return None, None
 
 
-def get_redirect_url(url: str, timeout: int = 10) -> Optional[str]:
-    """
-    获取 URL 的 302 跳转目标地址
-    不跟随跳转，直接返回 Location 头中的 URL
-    """
-    try:
-        resp = requests.get(
-            url,
-            headers=BROWSER_HEADERS,
-            timeout=timeout,
-            allow_redirects=False
-        )
-        if resp.status_code in [301, 302, 303, 307, 308]:
-            location = resp.headers.get('Location')
-            if location:
-                return location
-        return resp.url
-    except requests.RequestException as e:
-        logger.debug(f"获取跳转失败 {url}: {e}")
-        return None
-
-
 # ============================================================
-#  数据结构
-# ============================================================
-
-@dataclass
-class Article:
-    """文章数据结构"""
-    title: str
-    publish_date: str
-    source: str
-    content: str
-    url: str
-    schedule_events: List[Dict]
-
-
-# ============================================================
-#  第一步：自动访问华南师范大学新闻网，提取所有文章链接
-# ============================================================
-
-def fetch_news_page(url: str = NEWS_SCNU_EDU_URL) -> Optional[str]:
-    """
-    访问华南师范大学新闻网首页，返回 HTML 内容
-    """
-    logger.info(f"访问新闻网：{url}")
-    _, html = get_with_redirect(url, headers=BROWSER_HEADERS, timeout=PAGE_TIMEOUT)
-    if html:
-        logger.info(f"成功获取新闻网页面，大小：{len(html)} 字节")
-    else:
-        logger.error(f"无法访问新闻网：{url}")
-    return html
-
-
-def extract_article_links(html: str, base_url: str = NEWS_SCNU_EDU_URL) -> List[str]:
-    """
-    从 HTML 页面提取所有可能的文章链接
-    返回去重后的链接列表
-    """
-    if not html:
-        return []
-
-    soup = BeautifulSoup(html, "lxml")
-    links = set()
-
-    # 查找所有 <a> 标签，提取 href
-    for a in soup.find_all("a", href=True):
-        href = a.get("href", "").strip()
-        if href:
-            # 处理相对路径
-            full_url = urljoin(base_url, href)
-            links.add(full_url)
-
-    logger.info(f"从页面提取到 {len(links)} 个唯一链接")
-    return list(links)
-
-
-# ============================================================
-#  第二步：自动检测 302 跳转，筛选微信公众号链接
-# ============================================================
-
-def is_wechat_url(url: str) -> bool:
-    """
-    判断 URL 是否为微信公众号文章链接
-    """
-    return "mp.weixin.qq.com" in url
-
-
-def filter_wechat_links(links: List[str]) -> List[str]:
-    """
-    检测所有链接的 302 跳转目标，筛选出跳转到 mp.weixin.qq.com 的链接
-    返回有效微信链接列表
-    """
-    logger.info(f"开始检测 {len(links)} 个链接的跳转目标...")
-    wechat_links = []
-
-    for i, link in enumerate(links, 1):
-        logger.debug(f"[{i}/{len(links)}] 检测：{link}")
-
-        # 先直接判断是否已经是微信链接
-        if is_wechat_url(link):
-            logger.info(f"直接匹配微信链接：{link}")
-            wechat_links.append(link)
-            time.sleep(FETCH_DELAY)
-            continue
-
-        # 检测 302 跳转
-        redirect_url = get_redirect_url(link)
-        if redirect_url and is_wechat_url(redirect_url):
-            logger.info(f"跳转至微信：{link} -> {redirect_url}")
-            wechat_links.append(redirect_url)
-        else:
-            logger.debug(f"跳过非微信链接：{link}")
-
-        # 请求间隔，避免触发反爬
-        time.sleep(FETCH_DELAY)
-
-    logger.info(f"筛选出 {len(wechat_links)} 个有效微信链接")
-    return list(set(wechat_links))  # 去重
-
-
-# ============================================================
-#  第三步：提取文章正文
+#  文章正文提取
 # ============================================================
 
 def extract_article_content(wechat_url: str) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
@@ -320,11 +187,14 @@ def extract_article_content(wechat_url: str) -> Tuple[Optional[str], Optional[st
                 timeout=30
             )
             if result.returncode == 0:
+                # 解析输出
                 output = result.stdout
+                # 假设输出格式为 JSON
                 try:
                     data = json.loads(output)
                     return data.get("title"), data.get("publish_date"), data.get("source"), data.get("content")
                 except json.JSONDecodeError:
+                    # 非 JSON 输出，尝试解析纯文本
                     lines = output.strip().split("\n")
                     if len(lines) >= 3:
                         return lines[0], lines[1], lines[2] if len(lines) > 2 else "", "\n".join(lines[3:]) if len(lines) > 3 else ""
@@ -337,6 +207,7 @@ def extract_article_content(wechat_url: str) -> Tuple[Optional[str], Optional[st
         api_url = f"{FETCHER_API_URL}?url={wechat_url}&format=markdown"
         _, markdown_content = get_with_redirect(api_url)
         if markdown_content and len(markdown_content) > MIN_CONTENT_LENGTH:
+            # 从 markdown 中提取标题（第一行）
             lines = markdown_content.strip().split("\n")
             title = lines[0].lstrip("#").strip() if lines else ""
             return title, "", "", markdown_content
@@ -347,15 +218,15 @@ def extract_article_content(wechat_url: str) -> Tuple[Optional[str], Optional[st
 
 
 # ============================================================
-#  第四步：数据校验
+#  数据校验
 # ============================================================
 
-def validate_article(title: str, source: str, content: str, source_name: str = "晚安华师") -> bool:
+def validate_article(title: str, source: str, content: str) -> bool:
     """
     校验文章是否符合要求
     """
-    if not title or len(title) < MIN_TITLE_LENGTH:
-        logger.warning(f"校验失败：标题无效 '{title}'")
+    if not title:
+        logger.warning("校验失败：标题为空")
         return False
 
     if not content:
@@ -366,8 +237,8 @@ def validate_article(title: str, source: str, content: str, source_name: str = "
         logger.warning(f"校验失败：内容长度不足 {len(content)} < {MIN_CONTENT_LENGTH}")
         return False
 
-    # 来源校验
-    if source and source_name not in source:
+    # 来源校验（可选，某些文章可能没有明确来源）
+    if source and "晚安华师" not in source:
         logger.warning(f"校验失败：来源不匹配 '{source}'")
         return False
 
@@ -375,7 +246,7 @@ def validate_article(title: str, source: str, content: str, source_name: str = "
 
 
 # ============================================================
-#  第五步：时间提取模块
+#  时间提取模块
 # ============================================================
 
 TIME_PATTERNS = [
@@ -483,7 +354,7 @@ def _is_valid_event(event: str) -> bool:
         return False
     if re.search(r'[""「」『』《》]', event):
         return False
-    if re.search(r"[??!！]", event):
+    if re.search(r"[？？!！]", event):
         return False
     if re.match(r"^\s*(?:也 | 还 | 但 | 却 | 而 | 且 | 虽然 | 不过 | 然而 | 其实 | 但是 | 因此 | 所以 | 因为 | 由于 | 如果 | 假如 | 若)", event):
         return False
@@ -571,7 +442,7 @@ def extract_time_events(text: str, article_date: Optional[datetime] = None) -> L
 
 
 # ============================================================
-#  第六步：输出模块
+#  输出模块
 # ============================================================
 
 def format_markdown(articles: List[Article]) -> str:
@@ -612,6 +483,7 @@ def format_markdown(articles: List[Article]) -> str:
         all_events.extend(art.schedule_events)
 
     if all_events:
+        # 按时间排序
         all_events.sort(key=lambda x: x.get("标准化时间", ""))
         for evt in all_events:
             lines.append(f"- [{evt['标准化时间']}] {evt['事件内容']}")
@@ -634,14 +506,16 @@ def save_markdown(content: str, filepath: str) -> bool:
 
 
 def print_console_output(articles: List[Article]):
-    """控制台输出"""
+    """
+    控制台输出
+    """
     print()
     print("=" * 60)
     print("抓取结果")
     print("=" * 60)
 
     for i, art in enumerate(articles, 1):
-        print(f"\n[文章 {i}]")
+        print(f"\n[成功] 抓取到「晚安华师」最新文章{i}：")
         print(f"标题：{art.title}")
         print(f"发布日期：{art.publish_date}")
         print(f"来源：{art.source}")
@@ -655,148 +529,100 @@ def print_console_output(articles: List[Article]):
 
 
 # ============================================================
-#  第七步：排序模块 - 按微信官方发布时间排序
+#  单篇文章处理
 # ============================================================
 
-def parse_publish_date(date_str: str) -> datetime:
-    """解析发布日期字符串为 datetime 对象"""
-    if not date_str:
-        return datetime.min
+def process_article(url: str) -> Optional[Article]:
+    """
+    处理单篇微信公众号文章
+    """
+    if "mp.weixin.qq.com" not in url:
+        print("  [跳过] 非微信公众号文章链接")
+        return None
 
-    # 尝试多种格式
-    formats = [
-        "%Y-%m-%d",
-        "%Y年%m月%d日",
-        "%Y-%m-%d %H:%M:%S",
-        "%Y年%m月%d日 %H:%M:%S",
-    ]
+    print("  正在处理...")
+    title, pub_date, source, content = extract_article_content(url)
 
-    for fmt in formats:
+    if not validate_article(title, source, content):
+        print("  [失败] 文章校验失败")
+        return None
+
+    # 提取日程信息
+    article_date = datetime.now()
+    if pub_date:
         try:
-            return datetime.strptime(date_str[:len(date_str)].strip(), fmt)
+            article_date = datetime.strptime(pub_date[:10], "%Y-%m-%d")
         except ValueError:
-            continue
+            pass
 
-    return datetime.min
+    events = extract_time_events(content, article_date)
 
-
-def sort_articles_by_date(articles: List[Article]) -> List[Article]:
-    """按发布日期降序排序（最新的在前）"""
-    return sorted(articles, key=lambda a: parse_publish_date(a.publish_date), reverse=True)
+    article = Article(
+        title=title,
+        publish_date=pub_date,
+        source=source or "微信公众号「晚安华师」",
+        content=content,
+        url=url,
+        schedule_events=events
+    )
+    print(f"  [成功] 提取到 {len(events)} 条日程")
+    return article
 
 
 # ============================================================
-#  主流程 - 全自动执行
+#  主流程
 # ============================================================
 
-def run_auto_crawler() -> List[Article]:
-    """
-    全自动爬虫主流程
-    1. 访问新闻网
-    2. 提取所有链接
-    3. 检测 302 跳转，筛选微信链接
-    4. 抓取文章并校验
-    5. 排序取最新 N 篇
-    6. 提取日程
-    7. 输出结果
-    """
+def main():
+    """主函数"""
     print()
     print("=" * 60)
-    print("华南师范大学「晚安华师」日程自动抓取工具 v6.0")
+    print("华南师范大学「晚安华师」日程自动抓取工具 v5.0")
     print("=" * 60)
-    print(f"目标网站：{NEWS_SCNU_EDU_URL}")
     print(f"输出文件：{OUTPUT_MARKDOWN_FILE}")
-    print(f"目标获取：最新 {TARGET_ARTICLE_COUNT} 篇")
     print()
-    print("开始全自动抓取...")
-    print("=" * 60)
+    print("运行步骤说明：")
+    print("1. 输入微信公众号文章链接（mp.weixin.qq.com）")
+    print("2. 程序提取文章正文和日程信息")
+    print("3. 输出到控制台和 markdown 文件")
+    print()
+    print("注意：")
+    print("1. 新发布文章需等待 10-30 分钟才能被抓取")
+    print("2. 程序会自动使用微信 UA 规避安全策略")
+    print("3. fetcher API 仅用于兜底校验")
+    print()
+    print("输入 'q' 退出")
+    print()
 
     articles = []
 
-    # Step 1: 访问新闻网
-    print("\n[Step 1/6] 访问华南师范大学新闻网...")
-    html = fetch_news_page()
-    if not html:
-        logger.error("无法访问新闻网，程序终止")
-        print("[失败] 无法访问新闻网")
-        return []
-    time.sleep(FETCH_DELAY)
+    while True:
+        try:
+            url = input("请输入文章链接：").strip()
+        except (KeyboardInterrupt, EOFError):
+            print("\n再见！")
+            return
 
-    # Step 2: 提取所有链接
-    print("[Step 2/6] 提取页面所有文章链接...")
-    all_links = extract_article_links(html)
-    print(f"  找到 {len(all_links)} 个链接")
-    time.sleep(FETCH_DELAY)
-
-    # Step 3: 筛选微信公众号链接
-    print("[Step 3/6] 检测 302 跳转，筛选微信链接...")
-    wechat_links = filter_wechat_links(all_links)
-    print(f"  筛选出 {len(wechat_links)} 个微信链接")
-
-    if not wechat_links:
-        logger.warning("未找到任何微信公众号链接")
-        print("\n[警告] 未找到任何微信公众号链接")
-        print("可能原因：")
-        print("  1. 新闻网当前没有「晚安华师」的文章")
-        print("  2. 网络请求失败")
-        print("稍后可重新运行程序重试。")
-        return []
-
-    # Step 4: 抓取文章并校验
-    print(f"\n[Step 4/6] 抓取文章并校验（目标 {TARGET_ARTICLE_COUNT} 篇）...")
-    for i, url in enumerate(wechat_links, 1):
-        print(f"\n  [{i}/{len(wechat_links)}] 处理：{url[:60]}...")
-
-        title, pub_date, source, content = extract_article_content(url)
-
-        if not validate_article(title, source, content):
-            print("    [跳过] 文章校验失败")
-            continue
-
-        # 提取日程
-        article_date = datetime.now()
-        if pub_date:
-            try:
-                article_date = datetime.strptime(pub_date[:10], "%Y-%m-%d")
-            except ValueError:
-                pass
-
-        events = extract_time_events(content, article_date)
-
-        article = Article(
-            title=title,
-            publish_date=pub_date,
-            source=source or "微信公众号「晚安华师」",
-            content=content,
-            url=url,
-            schedule_events=events
-        )
-        articles.append(article)
-        print(f"    [成功] 标题={title[:30]}..., 日程={len(events)} 条")
-
-        # 已达到目标数量，停止抓取
-        if len(articles) >= TARGET_ARTICLE_COUNT:
-            print(f"\n  已达到目标数量 ({TARGET_ARTICLE_COUNT} 篇)，停止抓取")
+        if url.lower() in ("q", "quit", "exit"):
             break
 
-        time.sleep(FETCH_DELAY)
+        if not url:
+            continue
+
+        article = process_article(url)
+        if article:
+            articles.append(article)
+
+        print()
 
     if not articles:
-        print("\n[失败] 未能抓取到任何符合要求的文章")
-        return []
-
-    # Step 5: 按发布时间排序
-    print(f"\n[Step 5/6] 按发布时间排序...")
-    articles = sort_articles_by_date(articles)
-    print(f"  最新文章：{articles[0].title if articles else '无'}")
-
-    # Step 6: 输出结果
-    print(f"\n[Step 6/6] 输出结果...")
+        print("\n[失败] 未能抓取到任何文章")
+        return
 
     # 控制台输出
     print_console_output(articles)
 
-    # 保存 markdown 文件
+    # 保存到 markdown 文件
     markdown_content = format_markdown(articles)
     save_markdown(markdown_content, OUTPUT_MARKDOWN_FILE)
 
@@ -806,29 +632,6 @@ def run_auto_crawler() -> List[Article]:
     print("=" * 60)
     print(f"成功抓取：{len(articles)} 篇文章")
     print(f"结果已保存到：{OUTPUT_MARKDOWN_FILE}")
-    print(f"日志文件：{LOG_FILE}")
-
-    return articles
-
-
-def main():
-    """主函数 - 全自动入口"""
-    try:
-        articles = run_auto_crawler()
-        if not articles:
-            print("\n程序执行完成，但未获取到任何文章。")
-            print("请检查：")
-            print("  1. 网络连接是否正常")
-            print("  2. 华南师范大学新闻网是否可访问")
-            print("  3. 当前是否有「晚安华师」的文章发布")
-            sys.exit(1)
-    except KeyboardInterrupt:
-        print("\n\n用户中断程序")
-        sys.exit(0)
-    except Exception as e:
-        logger.exception(f"程序异常退出：{e}")
-        print(f"\n程序异常退出：{e}")
-        sys.exit(1)
 
 
 if __name__ == "__main__":

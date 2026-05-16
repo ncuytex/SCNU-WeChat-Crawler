@@ -41,7 +41,7 @@ pip install -r requirements.txt
 ### 全自动版本（推荐）
 
 ```bash
-python auto_scnu_crawler.py
+python src/auto_scnu_crawler.py
 ```
 
 程序启动后自动执行：
@@ -58,7 +58,7 @@ python auto_scnu_crawler.py
 ### 手动版本（备用）
 
 ```bash
-python scnu_wechat_crawler.py
+python src/scnu_wechat_crawler.py
 ```
 
 程序启动后：
@@ -150,13 +150,16 @@ OUTPUT_MARKDOWN_FILE = "wechat_schedule_output.md"
 
 ## 文件说明
 
-| 文件 | 说明 |
-|------|------|
-| `auto_scnu_crawler.py` | 全自动爬虫主程序（v6.0，推荐使用） |
-| `scnu_wechat_crawler.py` | 手动输入链接版本（v5.0，备用） |
+| 文件/目录 | 说明 |
+|-----------|------|
+| `src/` | 源代码目录 |
+| `src/auto_scnu_crawler.py` | 全自动爬虫主程序（v6.0，推荐使用） |
+| `src/scnu_wechat_crawler.py` | 手动输入链接版本（v5.0，备用） |
 | `requirements.txt` | 依赖列表 |
-| `wechat_schedule_output.md` | 输出文件 |
-| `scnu_auto_crawler.log` | 运行日志 |
+| `output/` | 输出文件目录 |
+| `output/wechat_schedule_output.md` | 输出文件 |
+| `logs/` | 日志文件目录 |
+| `logs/scnu_auto_crawler.log` | 运行日志 |
 
 ## 版本历史
 

@@ -4,7 +4,31 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-WeChat article (微信公众号文章) schedule extractor. Interactive tool that extracts time+event pairs from WeChat MP article URLs and saves them to CSV.
+华南师范大学「晚安华师」微信公众号日程自动抓取工具。Automatically crawls WeChat articles from SCNU news portal and extracts schedule events.
+
+## Running
+
+### Full Auto Crawler (v6.0, Recommended)
+
+```bash
+python src/auto_scnu_crawler.py
+```
+
+- Zero-interaction, fully automated
+- Visits https://news.scnu.edu.cn/ automatically
+- Detects 302 redirects, filters only WeChat links
+- Fetches latest 2 articles, extracts schedules
+- Output: console + `wechat_schedule_output.md`
+
+### Manual Crawler (v5.0, Fallback)
+
+```bash
+python src/scnu_wechat_crawler.py
+```
+
+- Manual URL input loop
+- Paste `mp.weixin.qq.com` URLs, press Enter
+- Type `q` to quit
 
 ## Setup
 
@@ -12,75 +36,63 @@ WeChat article (微信公众号文章) schedule extractor. Interactive tool that
 pip install -r requirements.txt
 ```
 
-## Running
+## Architecture (auto_scnu_crawler.py v6.0)
 
-```bash
-python wechat_crawler.py
-```
+Seven-step pipeline:
 
-Program starts an interactive prompt. Paste a WeChat article URL and press Enter to extract schedule info. Type `q` to quit.
+1. **`fetch_news_page()`** — Fetches SCNU news homepage with browser headers
+2. **`extract_article_links()`** — Extracts all `<a>` hrefs from HTML
+3. **`filter_wechat_links()`** — Detects 302 redirects, keeps only `mp.weixin.qq.com` targets
+4. **`extract_article_content()`** — Three-layer fallback:
+   - Direct request with WeChat UA (MicroMessenger/7.0.20.1781)
+   - wechat-article-extractor subprocess (if configured)
+   - Fallback API: `down.mptext.top/api/public/v1/download`
+5. **`validate_article()`** — Checks title length, content length (≥500), source contains "晚安华师"
+6. **`extract_time_events()`** — Regex patterns for Chinese date expressions + schedule keywords
+7. **Output** — `format_markdown()` + `save_markdown()` + `print_console_output()`
 
-## Architecture (single-file: `wechat_crawler.py`)
+### Time Extraction Patterns
 
-- **`fetch_article(url)`** — Fetches a single article via `requests` with MicroMessenger User-Agent, parses HTML with BeautifulSoup to extract title, content, and publish time.
-- **`extract_time_events()`** — Regex-based extraction of Chinese date expressions (年月日，月日，上/中/下旬，周/星期) paired with following text as events. Standardizes dates relative to article publish date.
-- **`save_events()`** — Appends events to CSV with MD5-based deduplication.
-- **`process_url()`** — Pipeline for a single URL: fetch → extract → save → print results.
-- **`main()`** — Interactive input loop. Reads URLs from stdin until user quits.
+- Full dates: `2026 年 3 月 15 日`
+- Month-day: `3 月 15 日`
+- Month-period: `3 月上旬`, `3 月中旬`, `3 月下旬`
+- Weekdays: `本周五`, `下周三`, `星期一下午`
+- Relative dates resolved against `article_date`
+
+### Schedule Validation
+
+Lines identified by structure (bullets, numbered lists, date prefixes). Events validated against `SCHEDULE_KEYWORDS` tuple (开学，放假，考试，报名，截止，etc.).
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `events.csv` | Output: deduplicated time+event records |
-| `crawler.log` | Application log |
+| `src/auto_scnu_crawler.py` | Main auto crawler (v6.0) |
+| `src/scnu_wechat_crawler.py` | Manual URL input crawler (v5.0) |
+| `requirements.txt` | Dependencies |
+| `output/wechat_schedule_output.md` | Output: article details + schedule summary |
+| `logs/scnu_auto_crawler.log` | Runtime log |
 
 ## Important Details
 
-- The User-Agent must include `MicroMessenger` — WeChat's article pages block non-WeChat browsers.
-- Time extraction handles relative dates (本周三，下周五) resolved against `article_date` from the publish timestamp.
+- **WeChat UA Required**: All requests must include `MicroMessenger` in User-Agent — WeChat blocks non-WeChat browsers
+- **Redirect Detection**: Does not follow redirects; reads `Location` header to detect WeChat links
+- **Fetch Delay**: 2-second delay between requests to avoid rate limiting
+- **Source Validation**: Only accepts articles where source contains "晚安华师"
+
+## Configurable Parameters (top of auto_scnu_crawler.py)
+
+```python
+TARGET_ARTICLE_COUNT = 2      # Number of articles to fetch
+FETCH_DELAY = 2               # Request interval (seconds)
+MIN_CONTENT_LENGTH = 500      # Minimum content length
+API_TIMEOUT = 15              # API timeout (seconds)
+```
 
 ## Dependencies
 
 ```
-requests>=2.28.0      # HTTP requests to WeChat MP
+requests>=2.28.0      # HTTP requests
 beautifulsoup4>=4.11.0  # HTML parsing
 lxml>=4.9.0           # BeautifulSoup parser backend
 ```
-
-## URL Validation
-
-Only processes URLs containing `mp.weixin.qq.com` — rejects all others.
-
-## New: SCNU WeChat Crawler (scnu_wechat_crawler.py)
-
-v5.0 - 华南师范大学「晚安华师」微信公众号日程自动抓取工具
-
-### Features
-
-- Manual WeChat article URL input
-- Auto-extraction of article content with WeChat UA bypass
-- Intelligent schedule event extraction
-- Data validation (source, title, content length)
-- Fallback API verification (fetcher API)
-- Multi-format output (console + markdown)
-
-### Running
-
-```bash
-python scnu_wechat_crawler.py
-```
-
-### Output
-
-- Console: Article title, date, source, extracted schedule events
-- File: `wechat_schedule_output.md` (markdown with full article details + schedule summary)
-
-### Key Differences from wechat_crawler.py
-
-| wechat_crawler.py | scnu_wechat_crawler.py |
-|-------------------|------------------------|
-| CSV output | Markdown output |
-| Simple time+event extraction | Full article content + schedule summary |
-| Basic validation | Multi-layer validation + fallback API |
-| Direct WeChat URL only | Same, with better error handling |

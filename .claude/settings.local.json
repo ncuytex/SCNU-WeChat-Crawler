@@ -2,7 +2,12 @@
   "permissions": {
     "allow": [
       "Bash(C:/Users/ccin/PyCharmMiscProject/.venv/Scripts/pip.exe install:*)",
-      "Bash(C:/Users/ccin/PyCharmMiscProject/.venv/Scripts/playwright.exe install:*)"
+      "Bash(C:/Users/ccin/PyCharmMiscProject/.venv/Scripts/playwright.exe install:*)",
+      "Bash(python scnu_wechat_crawler.py)",
+      "Bash(pip install *)",
+      "WebFetch(domain:news.scnu.edu.cn)",
+      "Bash(python auto_scnu_crawler.py)",
+      "Bash(python src/auto_scnu_crawler.py)"
     ]
   }
 }
