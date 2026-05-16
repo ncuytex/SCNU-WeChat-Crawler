@@ -575,7 +575,7 @@ class AIAnalyzer:
             "Authorization": f"Bearer {self.api_key}",
         }
 
-        # DeepSeek / OpenAI 兼容格式
+        # DeepSeek / OpenAI / 阿里云百炼兼容格式
         payload = {
             "model": self.model,
             "messages": [
@@ -584,8 +584,17 @@ class AIAnalyzer:
             "temperature": 0.1,
         }
 
+        # 阿里云百炼需要完整的 URL
+        api_url = self.api_url
+        if self.api_type == "qwen" and not api_url.endswith("/chat/completions"):
+            # 自动补全阿里云百炼的 endpoint
+            if api_url.endswith("/compatible-mode/v1"):
+                api_url = f"{api_url}/chat/completions"
+            elif "dashscope" in api_url and not api_url.endswith("/v1/chat/completions"):
+                api_url = f"{api_url}/chat/completions"
+
         response = requests.post(
-            self.api_url,
+            api_url,
             headers=headers,
             json=payload,
             timeout=self.timeout
