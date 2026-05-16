@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-华南师范大学「晚安华师」微信公众号日程自动抓取工具 v6.1
+华南师范大学「晚安华师」微信公众号日程自动抓取工具 v6.2
 ======================================================
 功能特性：
 1. 全自动运行 - 无需任何用户输入，双击即可运行
@@ -10,9 +10,10 @@
 4. 自动检测 302 跳转，智能筛选微信公众号链接
 5. 自动抓取文章内容，校验来源「晚安华师」
 6. 按微信官方发布时间排序，取最新 2 篇
-7. 智能提取日程信息
+7. 智能提取日程信息（支持正则/AI 双模式）
 8. 自动输出到控制台和 markdown 文件
 9. 已抓取文章标记 - 自动记录已抓取文章，避免重复处理
+10. AI 智能分析日程 - 支持调用 AI 大模型智能分析日程（可选）
 
 运行方式：
     python auto_scnu_crawler.py
@@ -23,11 +24,18 @@
     - scnu_auto_crawler.log (运行日志)
     - crawled_urls.txt (已抓取文章 URL 记录)
 
+配置方式：
+    - 修改 config.json 配置文件
+    - analysis_mode: "regex" (正则模式) 或 "ai" (AI 模式)
+    - AI 模式需配置 ai_api_key
+
 注意事项：
     1. 新发布文章需等待 10-30 分钟才能被抓取
     2. 程序自动使用微信 UA 绕过安全策略
     3. 仅处理跳转到 mp.weixin.qq.com 的链接
     4. 已抓取文章会自动记录，下次运行时跳过
+    5. AI 模式需要配置有效的 API Key
+    6. AI 分析失败时自动降级到正则模式
 """
 
 import re
@@ -81,6 +89,42 @@ LOG_FILE = os.path.join(LOG_DIR, "scnu_auto_crawler.log")
 
 # 需要获取的最新文章数量
 TARGET_ARTICLE_COUNT = 2
+
+# ============================================================
+#  配置文件管理
+# ============================================================
+
+CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
+
+DEFAULT_CONFIG = {
+    "analysis_mode": "regex",
+    "ai_api_type": "deepseek",
+    "ai_api_url": "https://api.deepseek.com/v1/chat/completions",
+    "ai_api_key": "",
+    "ai_model": "deepseek-chat",
+    "ai_timeout": 30,
+    "max_retry": 3,
+    "ai_prompt": "请你从文章中提取所有日程、活动、会议、通知信息，包括时间、地点、事件、参与对象。请按照以下 JSON 格式返回：{\"events\": [{\"time\": \"时间\", \"location\": \"地点\", \"event\": \"事件\", \"participants\": \"参与对象\"}]}。如果没有日程，返回 {\"events\": []}。只返回 JSON，不要多余解释。",
+}
+
+
+def load_config() -> Dict:
+    """
+    加载配置文件
+    如果配置文件不存在，使用默认配置
+    """
+    config = DEFAULT_CONFIG.copy()
+    try:
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                file_config = json.load(f)
+                config.update(file_config)
+            logger.info(f"已加载配置文件：{CONFIG_FILE}")
+        else:
+            logger.warning(f"配置文件不存在：{CONFIG_FILE}，使用默认配置")
+    except Exception as e:
+        logger.error(f"加载配置文件失败：{e}，使用默认配置")
+    return config
 
 # ============================================================
 #  日志初始化
@@ -433,7 +477,148 @@ def validate_article(title: str, source: str, content: str, source_name: str = "
 
 
 # ============================================================
-#  第五步：时间提取模块
+#  AI 分析模块
+# ============================================================
+
+class AIAnalyzer:
+    """AI 大模型分析器"""
+
+    def __init__(self, config: Dict):
+        self.api_url = config.get("ai_api_url", DEFAULT_CONFIG["ai_api_url"])
+        self.api_key = config.get("ai_api_key", "")
+        self.model = config.get("ai_model", DEFAULT_CONFIG["ai_model"])
+        self.api_type = config.get("ai_api_type", DEFAULT_CONFIG["ai_api_type"])
+        self.timeout = config.get("ai_timeout", DEFAULT_CONFIG["ai_timeout"])
+        self.max_retry = config.get("max_retry", DEFAULT_CONFIG["max_retry"])
+        self.prompt = config.get("ai_prompt", DEFAULT_CONFIG["ai_prompt"])
+
+    def analyze(self, content: str) -> List[Dict]:
+        """
+        使用 AI 分析文章内容，提取日程信息
+        返回统一的日程格式：[{"时间原文": "...", "标准化时间": "...", "事件内容": "..."}]
+        """
+        if not self.api_key:
+            logger.warning("AI API Key 未配置，降级到正则模式")
+            return []
+
+        if not content or len(content) < MIN_CONTENT_LENGTH:
+            logger.debug("文章内容不足，跳过 AI 分析")
+            return []
+
+        for attempt in range(1, self.max_retry + 1):
+            try:
+                logger.info(f"[AI 分析] 第 {attempt}/{self.max_retry} 次尝试...")
+                result = self._call_api(content)
+                if result:
+                    logger.info(f"[AI 分析] 成功提取 {len(result)} 条日程")
+                    return result
+                logger.warning(f"[AI 分析] 第 {attempt} 次返回为空")
+            except Exception as e:
+                logger.warning(f"[AI 分析] 第 {attempt} 次失败：{e}")
+            if attempt < self.max_retry:
+                time.sleep(1)
+
+        logger.warning("[AI 分析] 所有尝试均失败，降级到正则模式")
+        return []
+
+    def _call_api(self, content: str) -> List[Dict]:
+        """调用 AI API 分析内容"""
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}",
+        }
+
+        # DeepSeek / OpenAI 兼容格式
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "user", "content": f"{self.prompt}\n\n文章内容：\n{content[:8000]}"}
+            ],
+            "temperature": 0.1,
+        }
+
+        response = requests.post(
+            self.api_url,
+            headers=headers,
+            json=payload,
+            timeout=self.timeout
+        )
+
+        if response.status_code != 200:
+            error_msg = f"API 返回错误：{response.status_code}"
+            if response.status_code == 401:
+                error_msg = "API Key 错误（401）"
+            elif response.status_code == 429:
+                error_msg = "请求频率超限（429）"
+            elif response.status_code >= 500:
+                error_msg = f"服务器错误：{response.status_code}"
+            raise Exception(error_msg)
+
+        data = response.json()
+
+        # 提取返回内容
+        if "choices" not in data or not data["choices"]:
+            raise Exception("API 返回格式错误：无 choices")
+
+        content_text = data["choices"][0]["message"]["content"]
+        logger.debug(f"[AI 分析] 返回内容：{content_text[:200]}...")
+
+        # 解析 JSON
+        return self._parse_ai_response(content_text)
+
+    def _parse_ai_response(self, content_text: str) -> List[Dict]:
+        """解析 AI 返回的 JSON 内容，转换为统一的日程格式"""
+        try:
+            # 尝试提取 JSON（处理可能的 markdown 包裹）
+            json_str = content_text.strip()
+            if json_str.startswith("```json"):
+                json_str = json_str[7:]
+            if json_str.startswith("```"):
+                json_str = json_str[3:]
+            if json_str.endswith("```"):
+                json_str = json_str[:-3]
+            json_str = json_str.strip()
+
+            data = json.loads(json_str)
+
+            # 提取 events 数组
+            events = data.get("events", [])
+            if not isinstance(events, list):
+                logger.warning(f"[AI 分析] events 不是数组：{type(events)}")
+                return []
+
+            # 转换为统一格式
+            results = []
+            for evt in events:
+                if not isinstance(evt, dict):
+                    continue
+                time_str = evt.get("time", "")
+                event_str = evt.get("event", "")
+                if time_str and event_str:
+                    results.append({
+                        "时间原文": time_str,
+                        "标准化时间": time_str,  # AI 返回的时间已经是自然语言
+                        "事件内容": event_str,
+                    })
+                elif event_str:  # 只有事件内容，没有时间
+                    results.append({
+                        "时间原文": "未注明",
+                        "标准化时间": "未注明",
+                        "事件内容": event_str,
+                    })
+
+            return results if results else []
+
+        except json.JSONDecodeError as e:
+            logger.warning(f"[AI 分析] JSON 解析失败：{e}, 原始返回：{content_text[:200]}")
+            return []
+        except Exception as e:
+            logger.warning(f"[AI 分析] 解析失败：{e}")
+            return []
+
+
+# ============================================================
+#  第五步：时间提取模块（正则表达式模式）
 # ============================================================
 
 TIME_PATTERNS = [
@@ -558,13 +743,37 @@ def _is_valid_event(event: str) -> bool:
     return True
 
 
-def extract_time_events(text: str, article_date: Optional[datetime] = None) -> List[Dict]:
-    """从文章正文中提取「时间 + 事件」对。"""
+def extract_time_events(text: str, article_date: Optional[datetime] = None,
+                        mode: str = "regex", config: Optional[Dict] = None) -> List[Dict]:
+    """
+    从文章正文中提取「时间 + 事件」对（统一入口函数）
+
+    Args:
+        text: 文章正文
+        article_date: 文章发布日期
+        mode: 分析模式 ("regex" 或 "ai")
+        config: 配置文件（AI 模式时需要）
+
+    Returns:
+        日程列表：[{"时间原文": "...", "标准化时间": "...", "事件内容": "..."}]
+    """
+    if mode == "ai" and config:
+        # AI 模式
+        analyzer = AIAnalyzer(config)
+        return analyzer.analyze(text)
+    else:
+        # 正则模式（原有逻辑）
+        if not text:
+            return []
+        if article_date is None:
+            article_date = datetime.now()
+        return _extract_time_events_regex(text, article_date)
+
+
+def _extract_time_events_regex(text: str, article_date: datetime) -> List[Dict]:
+    """从文章正文中提取「时间 + 事件」对（正则表达式模式）。"""
     if not text:
         return []
-
-    if article_date is None:
-        article_date = datetime.now()
 
     results = []
 
@@ -636,13 +845,19 @@ def extract_time_events(text: str, article_date: Optional[datetime] = None) -> L
 #  第六步：输出模块
 # ============================================================
 
-def format_markdown(articles: List[Article]) -> str:
+def format_markdown(articles: List[Article], analysis_mode: str = "regex") -> str:
     """
     将抓取结果格式化为 markdown
+
+    Args:
+        articles: 文章列表
+        analysis_mode: 分析模式 ("regex" 或 "ai")
     """
+    mode_name = "AI 大模型分析" if analysis_mode == "ai" else "正则表达式分析"
     lines = []
     lines.append("# 晚安华师日程信息抓取结果")
     lines.append(f"抓取时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    lines.append(f"分析模式：{mode_name}")
     lines.append(f"共抓取 {len(articles)} 篇文章\n")
 
     for i, art in enumerate(articles, 1):
@@ -695,12 +910,20 @@ def save_markdown(content: str, filepath: str) -> bool:
         return False
 
 
-def print_console_output(articles: List[Article]):
-    """控制台输出"""
+def print_console_output(articles: List[Article], analysis_mode: str = "regex"):
+    """
+    控制台输出
+
+    Args:
+        articles: 文章列表
+        analysis_mode: 分析模式
+    """
+    mode_name = "AI 大模型分析" if analysis_mode == "ai" else "正则表达式分析"
     print()
     print("=" * 60)
     print("抓取结果")
     print("=" * 60)
+    print(f"分析模式：{mode_name}")
 
     for i, art in enumerate(articles, 1):
         print(f"\n[文章 {i}]")
@@ -763,13 +986,26 @@ def run_auto_crawler() -> List[Article]:
     7. 提取日程
     8. 输出结果
     """
+    # 加载配置文件
+    print("\n[初始化] 读取配置文件...")
+    config = load_config()
+    analysis_mode = config.get("analysis_mode", "regex")
+    print(f"  分析模式：{'AI 大模型分析' if analysis_mode == 'ai' else '正则表达式分析'}")
+    if analysis_mode == "ai":
+        if not config.get("ai_api_key"):
+            print("  [警告] AI API Key 未配置，将降级到正则模式")
+            analysis_mode = "regex"
+        else:
+            print(f"  AI 模型：{config.get('ai_model', 'unknown')}")
+
     print()
     print("=" * 60)
-    print("华南师范大学「晚安华师」日程自动抓取工具 v6.1")
+    print("华南师范大学「晚安华师」日程自动抓取工具 v6.2")
     print("=" * 60)
     print(f"目标网站：{NEWS_SCNU_EDU_URL}")
     print(f"输出文件：{OUTPUT_MARKDOWN_FILE}")
     print(f"目标获取：最新 {TARGET_ARTICLE_COUNT} 篇")
+    print(f"分析模式：{'AI 大模型分析' if analysis_mode == 'ai' else '正则表达式分析'}")
     print()
     print("开始全自动抓取...")
     print("=" * 60)
@@ -831,7 +1067,7 @@ def run_auto_crawler() -> List[Article]:
             print("    [跳过] 文章校验失败，不记录到已抓取列表")
             continue
 
-        # 提取日程
+        # 提取日程（使用配置的分析模式）
         article_date = datetime.now()
         if pub_date:
             try:
@@ -839,7 +1075,7 @@ def run_auto_crawler() -> List[Article]:
             except ValueError:
                 pass
 
-        events = extract_time_events(content, article_date)
+        events = extract_time_events(content, article_date, mode=analysis_mode, config=config)
 
         article = Article(
             title=title,
@@ -875,10 +1111,10 @@ def run_auto_crawler() -> List[Article]:
     print(f"\n[Step 6/6] 输出结果...")
 
     # 控制台输出
-    print_console_output(articles)
+    print_console_output(articles, analysis_mode=analysis_mode)
 
     # 保存 markdown 文件
-    markdown_content = format_markdown(articles)
+    markdown_content = format_markdown(articles, analysis_mode=analysis_mode)
     save_markdown(markdown_content, OUTPUT_MARKDOWN_FILE)
 
     print()
