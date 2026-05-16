@@ -18,8 +18,8 @@
   "ai_model": "deepseek-chat",
   "_ai_model_comment": "使用的 AI 模型名称。阿里云百炼：qwen-plus, qwen-max, qwen-turbo 等",
 
-  "ai_timeout": 30,
-  "_ai_timeout_comment": "AI 请求超时时间（秒）",
+  "ai_timeout": 90,
+  "_ai_timeout_comment": "AI 请求超时时间（秒）。阿里云百炼建议 90 秒以上",
 
   "max_retry": 3,
   "_max_retry_comment": "AI 请求失败时最大重试次数",

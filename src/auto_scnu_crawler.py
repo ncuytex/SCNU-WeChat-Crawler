@@ -104,7 +104,7 @@ DEFAULT_CONFIG = {
     "ai_api_url": "https://api.deepseek.com/v1/chat/completions",
     "ai_api_key": "",
     "ai_model": "deepseek-chat",
-    "ai_timeout": 30,
+    "ai_timeout": 90,
     "max_retry": 3,
     "ai_prompt": "请你从文章中提取所有日程、活动、会议、通知信息，包括时间、地点、事件、参与对象。请按照以下 JSON 格式返回：{\"events\": [{\"time\": \"时间\", \"location\": \"地点\", \"event\": \"事件\", \"participants\": \"参与对象\"}]}。如果没有日程，返回 {\"events\": []}。只返回 JSON，不要多余解释。",
 }
@@ -465,7 +465,7 @@ def extract_article_content(wechat_url: str) -> Tuple[Optional[str], Optional[st
                 [sys.executable, WECHAT_ARTICLE_EXTRACTOR_PATH, "--no-vision", wechat_url],
                 capture_output=True,
                 text=True,
-                timeout=30
+                timeout=60
             )
             if result.returncode == 0:
                 output = result.stdout
