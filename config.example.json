@@ -1,0 +1,29 @@
+{
+  "_comment": "华南师范大学微信公众号爬虫配置文件示例",
+  "_version": "1.0.0",
+  "_note": "复制此文件为 config.json 并填写真实配置信息",
+
+  "analysis_mode": "regex",
+  "_analysis_mode_comment": "日程分析模式：'regex' = 正则表达式模式，'ai' = AI 大模型分析模式",
+
+  "ai_api_type": "deepseek",
+  "_ai_api_type_comment": "AI API 类型：'deepseek', 'openai', 'claude', 'qwen', 'custom'",
+
+  "ai_api_url": "https://api.deepseek.com/v1/chat/completions",
+  "_ai_api_url_comment": "AI API 请求地址",
+
+  "ai_api_key": "sk-your-api-key-here",
+  "_ai_api_key_comment": "AI API 密钥（使用 AI 模式时必填）",
+
+  "ai_model": "deepseek-chat",
+  "_ai_model_comment": "使用的 AI 模型名称",
+
+  "ai_timeout": 30,
+  "_ai_timeout_comment": "AI 请求超时时间（秒）",
+
+  "max_retry": 3,
+  "_max_retry_comment": "AI 请求失败时最大重试次数",
+
+  "ai_prompt": "请你从文章中提取所有日程、活动、会议、通知信息，包括时间、地点、事件、参与对象。请按照以下 JSON 格式返回：{\"events\": [{\"time\": \"时间\", \"location\": \"地点\", \"event\": \"事件\", \"participants\": \"参与对象\"}]}。如果没有日程，返回 {\"events\": []}。只返回 JSON，不要多余解释。",
+  "_ai_prompt_comment": "AI 分析日程时使用的提示词"
+}

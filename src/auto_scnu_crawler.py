@@ -108,22 +108,67 @@ DEFAULT_CONFIG = {
 }
 
 
+def check_config_file() -> bool:
+    """
+    检查配置文件是否存在
+    如果不存在，提示用户复制 config.example.json
+
+    返回：配置文件是否存在
+    """
+    if not os.path.exists(CONFIG_FILE):
+        example_file = os.path.join(BASE_DIR, "config.example.json")
+        print("\n" + "=" * 60)
+        print("配置文件缺失提示")
+        print("=" * 60)
+        print(f"未找到配置文件：{CONFIG_FILE}")
+        print()
+        if os.path.exists(example_file):
+            print("请按以下步骤初始化配置：")
+            print()
+            print("  1. 复制配置模板文件：")
+            print(f"     cp config.example.json config.json")
+            print()
+            print("  2. 编辑 config.json，填写你的配置信息：")
+            print(f"     {CONFIG_FILE}")
+            print()
+            print("  3. 如需使用 AI 分析模式，请配置 ai_api_key")
+            print()
+            print("提示：当前将使用默认配置继续运行")
+            print("=" * 60)
+        else:
+            print("错误：配置模板文件也不存在")
+            print(f"请检查项目文件是否完整：{example_file}")
+            print("=" * 60)
+        return False
+    return True
+
+
 def load_config() -> Dict:
     """
     加载配置文件
-    如果配置文件不存在，使用默认配置
+    如果配置文件不存在，使用默认配置并提示用户
     """
     config = DEFAULT_CONFIG.copy()
+
+    # 检查配置文件是否存在
+    config_exists = check_config_file()
+
     try:
-        if os.path.exists(CONFIG_FILE):
+        if config_exists:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                 file_config = json.load(f)
                 config.update(file_config)
             logger.info(f"已加载配置文件：{CONFIG_FILE}")
         else:
             logger.warning(f"配置文件不存在：{CONFIG_FILE}，使用默认配置")
+    except json.JSONDecodeError as e:
+        logger.error(f"配置文件 JSON 格式错误：{e}")
+        print(f"\n[错误] 配置文件 JSON 格式错误：{e}")
+        print("请检查 config.json 文件语法是否正确")
     except Exception as e:
         logger.error(f"加载配置文件失败：{e}，使用默认配置")
+        print(f"\n[警告] 加载配置文件失败：{e}")
+
     return config
 
 # ============================================================

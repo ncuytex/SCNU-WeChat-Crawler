@@ -35,6 +35,7 @@ ENV/
 *~
 
 # Logs
+logs/crawled_urls.txt
 logs/*.log
 *.log
 
